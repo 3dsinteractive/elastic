@@ -628,6 +628,46 @@ func (s *SearchService) Do(ctx context.Context) (*SearchResult, error) {
 	return ret, nil
 }
 
+// DoRaw executes the search and returns a raw SearchResult.
+func (s *SearchService) DoRaw(ctx context.Context) (*json.RawMessage, error) {
+	// Check pre-conditions
+	if err := s.Validate(); err != nil {
+		return nil, err
+	}
+
+	// Get URL for request
+	path, params, err := s.buildURL()
+	if err != nil {
+		return nil, err
+	}
+
+	// Perform request
+	var body interface{}
+	if s.source != nil {
+		body = s.source
+	} else {
+		src, err := s.searchSource.Source()
+		if err != nil {
+			return nil, err
+		}
+		body = src
+	}
+	res, err := s.client.PerformRequest(ctx, PerformRequestOptions{
+		Method:          "POST",
+		Path:            path,
+		Params:          params,
+		Body:            body,
+		MaxResponseSize: s.maxResponseSize,
+		Headers:         s.headers,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Return raw search results
+	return &res.Body, nil
+}
+
 // SearchResult is the result of a search in Elasticsearch.
 type SearchResult struct {
 	Header          http.Header          `json:"-"`
