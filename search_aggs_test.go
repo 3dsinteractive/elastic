@@ -149,7 +149,8 @@ func TestAggs(t *testing.T) {
 	builder = builder.Aggregation("centroid", geoCentroidAgg)
 	// Unnamed filters
 	countByUserAgg := NewFiltersAggregation().
-		Filters(NewTermQuery("user", "olivere"), NewTermQuery("user", "sandrae"))
+		Filters(NewTermQuery("user", "olivere"), NewTermQuery("user", "sandrae")).
+		OtherBucket(true).OtherBucketKey("other")
 	builder = builder.Aggregation("countByUser", countByUserAgg)
 	// Named filters
 	countByUserAgg2 := NewFiltersAggregation().
@@ -1046,8 +1047,8 @@ func TestAggs(t *testing.T) {
 	if countByUserAggRes == nil {
 		t.Fatalf("expected != nil; got: nil")
 	}
-	if len(countByUserAggRes.Buckets) != 2 {
-		t.Fatalf("expected %d; got: %d", 2, len(countByUserAggRes.Buckets))
+	if len(countByUserAggRes.Buckets) != 3 {
+		t.Fatalf("expected %d; got: %d", 3, len(countByUserAggRes.Buckets))
 	}
 	if len(countByUserAggRes.NamedBuckets) != 0 {
 		t.Fatalf("expected %d; got: %d", 0, len(countByUserAggRes.NamedBuckets))
@@ -1057,6 +1058,9 @@ func TestAggs(t *testing.T) {
 	}
 	if countByUserAggRes.Buckets[1].DocCount != 1 {
 		t.Errorf("expected %d; got: %d", 1, countByUserAggRes.Buckets[1].DocCount)
+	}
+	if countByUserAggRes.Buckets[2].DocCount != 0 {
+		t.Errorf("expected %d; got: %d", 0, countByUserAggRes.Buckets[2].DocCount)
 	}
 
 	// Filters agg "countByUser2" (named)
@@ -1315,7 +1319,7 @@ func TestAggsCompositeIntegration(t *testing.T) {
 			t.Fatalf("expected %d; got: %d", want, have)
 		}
 		afterKey = compositeAggRes.AfterKey
-		if afterKey == nil || len(afterKey) == 0 {
+		if len(afterKey) == 0 {
 			t.Fatalf("expected after_key; got: %v", afterKey)
 		}
 		if v, found := afterKey["composite_users"]; !found {
@@ -1368,7 +1372,7 @@ func TestAggsCompositeIntegration(t *testing.T) {
 			t.Fatalf("expected %d; got: %d", want, have)
 		}
 		afterKey = compositeAggRes.AfterKey
-		if afterKey == nil || len(afterKey) == 0 {
+		if len(afterKey) == 0 {
 			t.Fatalf("expected after_key; got: %v", afterKey)
 		}
 		if v, found := afterKey["composite_users"]; !found {
@@ -2946,8 +2950,8 @@ func TestAggsBucketDateRange(t *testing.T) {
 	if agg.Buckets[0].To == nil {
 		t.Errorf("expected To != %v; got: %v", nil, agg.Buckets[0].To)
 	}
-	if *agg.Buckets[0].To != float64(1.3437792E+12) {
-		t.Errorf("expected To = %v; got: %v", float64(1.3437792E+12), *agg.Buckets[0].To)
+	if *agg.Buckets[0].To != float64(1.3437792e+12) {
+		t.Errorf("expected To = %v; got: %v", float64(1.3437792e+12), *agg.Buckets[0].To)
 	}
 	if agg.Buckets[0].ToAsString != "08-2012" {
 		t.Errorf("expected ToAsString = %q; got: %q", "08-2012", agg.Buckets[0].ToAsString)
@@ -2958,8 +2962,8 @@ func TestAggsBucketDateRange(t *testing.T) {
 	if agg.Buckets[1].From == nil {
 		t.Errorf("expected From != %v; got: %v", nil, agg.Buckets[1].From)
 	}
-	if *agg.Buckets[1].From != float64(1.3437792E+12) {
-		t.Errorf("expected From = %v; got: %v", float64(1.3437792E+12), *agg.Buckets[1].From)
+	if *agg.Buckets[1].From != float64(1.3437792e+12) {
+		t.Errorf("expected From = %v; got: %v", float64(1.3437792e+12), *agg.Buckets[1].From)
 	}
 	if agg.Buckets[1].FromAsString != "08-2012" {
 		t.Errorf("expected FromAsString = %q; got: %q", "08-2012", agg.Buckets[1].FromAsString)

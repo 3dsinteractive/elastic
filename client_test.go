@@ -132,6 +132,19 @@ func TestClientWithMultipleURLs(t *testing.T) {
 	}
 }
 
+func TestClientWithInvalidURLs(t *testing.T) {
+	client, err := NewClient(SetURL(" http://foo.com", "http://[fe80::%31%25en0]:8080/"))
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if want, have := `first path segment in URL cannot contain colon`, err.Error(); !strings.Contains(have, want) {
+		t.Fatalf("expected error to contain %q, have %q", want, have)
+	}
+	if client != nil {
+		t.Fatal("expected client == nil")
+	}
+}
+
 func TestClientWithBasicAuth(t *testing.T) {
 	client, err := NewClient(SetBasicAuth("user", "secret"))
 	if err != nil {
@@ -1190,7 +1203,7 @@ func TestPerformRequestWithMaxResponseSize(t *testing.T) {
 		t.Fatal("expected response to be != nil")
 	}
 
-	res, err = client.PerformRequest(context.TODO(), PerformRequestOptions{
+	_, err = client.PerformRequest(context.TODO(), PerformRequestOptions{
 		Method:          "GET",
 		Path:            "/",
 		MaxResponseSize: 100,
@@ -1254,7 +1267,7 @@ func TestPerformRequestRetryOnHttpError(t *testing.T) {
 func TestPerformRequestNoRetryOnValidButUnsuccessfulHttpStatus(t *testing.T) {
 	var numFailedReqs int
 	fail := func(r *http.Request) (*http.Response, error) {
-		numFailedReqs += 1
+		numFailedReqs++
 		return &http.Response{Request: r, StatusCode: 500, Body: http.NoBody}, nil
 	}
 
@@ -1284,6 +1297,42 @@ func TestPerformRequestNoRetryOnValidButUnsuccessfulHttpStatus(t *testing.T) {
 	// Retry should not have triggered additional requests because
 	if numFailedReqs != 1 {
 		t.Errorf("expected %d failed requests; got: %d", 1, numFailedReqs)
+	}
+}
+
+func TestPerformRequestOnNoConnectionsWithHealthcheckRevival(t *testing.T) {
+	fail := func(r *http.Request) (*http.Response, error) {
+		return nil, errors.New("request failed")
+	}
+	tr := &failingTransport{path: "/fail", fail: fail}
+	httpClient := &http.Client{Transport: tr}
+	client, err := NewClient(SetHttpClient(httpClient), SetMaxRetries(0), SetHealthcheck(true))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Run against a failing endpoint to mark connection as dead
+	res, err := client.PerformRequest(context.TODO(), PerformRequestOptions{
+		Method: "GET",
+		Path:   "/fail",
+	})
+	if err == nil {
+		t.Fatal(err)
+	}
+	if res != nil {
+		t.Fatal("expected no response")
+	}
+
+	// Forced healthcheck should bring connection back to life and complete request
+	res, err = client.PerformRequest(context.TODO(), PerformRequestOptions{
+		Method: "GET",
+		Path:   "/",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res == nil {
+		t.Fatal("expected response to be != nil")
 	}
 }
 
@@ -1396,7 +1445,7 @@ func TestPerformRequestWithTimeout(t *testing.T) {
 	}
 }
 
-func TestPerformRequestWithCustomHeader(t *testing.T) {
+func TestPerformRequestWithCustomHTTPHeadersOnRequest(t *testing.T) {
 	client, err := NewClient()
 	if err != nil {
 		t.Fatal(err)
@@ -1419,6 +1468,84 @@ func TestPerformRequestWithCustomHeader(t *testing.T) {
 	}
 	if want, have := "123456", res.Header.Get("X-Opaque-Id"); want != have {
 		t.Fatalf("want response header X-Opaque-Id=%q, have %q", want, have)
+	}
+}
+
+func TestPerformRequestWithCustomHTTPHeadersOnClient(t *testing.T) {
+	client, err := NewClient(SetHeaders(http.Header{
+		"Custom-Id":   []string{"olivere"},
+		"X-Opaque-Id": []string{"sandra"},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := client.PerformRequest(context.TODO(), PerformRequestOptions{
+		Method: "GET",
+		Path:   "/_tasks",
+		Params: url.Values{
+			"pretty": []string{"true"},
+		},
+		Headers: http.Header{
+			"X-Opaque-Id": []string{"123456"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res == nil {
+		t.Fatal("expected response to be != nil")
+	}
+	// Request-level headers have preference
+	if want, have := "123456", res.Header.Get("X-Opaque-Id"); want != have {
+		t.Fatalf("want response header X-Opaque-Id=%q, have %q", want, have)
+	}
+}
+
+func TestPerformRequestWithCustomHTTPHeadersPriority(t *testing.T) {
+	var req *http.Request
+	h := func(r *http.Request) (*http.Response, error) {
+		req = new(http.Request)
+		*req = *r
+		return &http.Response{Request: r, StatusCode: http.StatusOK, Body: http.NoBody}, nil
+	}
+	tr := &failingTransport{path: "/", fail: h}
+	httpClient := &http.Client{Transport: tr}
+
+	client, err := NewClient(SetHttpClient(httpClient), SetHeaders(http.Header{
+		"Custom-Id":   []string{"olivere"},
+		"X-Opaque-Id": []string{"sandra"}, // <- will be overridden by request-level header
+	}), SetSniff(false), SetHealthcheck(false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := client.PerformRequest(context.TODO(), PerformRequestOptions{
+		Method: "GET",
+		Path:   "/",
+		Params: url.Values{
+			"pretty": []string{"true"},
+		},
+		Headers: http.Header{
+			"X-Opaque-Id": []string{"123456"}, // <- request-level has preference
+			"X-Somewhat":  []string{"somewhat"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res == nil {
+		t.Fatal("expected response to be != nil")
+	}
+	if req == nil {
+		t.Fatal("expected to record HTTP request")
+	}
+	if want, have := "123456", req.Header.Get("X-Opaque-Id"); want != have {
+		t.Fatalf("want HTTP header X-Opaque-Id=%q, have %q", want, have)
+	}
+	if want, have := "olivere", req.Header.Get("Custom-Id"); want != have {
+		t.Fatalf("want HTTP header Custom-Id=%q, have %q", want, have)
+	}
+	if want, have := "somewhat", req.Header.Get("X-Somewhat"); want != have {
+		t.Fatalf("want HTTP header X-Somewhat=%q, have %q", want, have)
 	}
 }
 
